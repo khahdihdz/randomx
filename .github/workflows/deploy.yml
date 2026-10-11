@@ -33,7 +33,7 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           html = Path('index.html').read_text(encoding='utf-8')
-          start = html.rfind('<script>') + len('<script>')
+          start = html.find('<script>') + len('<script>')
           end = html.find('</script>', start)
           assert start >= len('<script>') and end > start, 'Inline JavaScript block not found'
           Path('/tmp/randomx-check.js').write_text(html[start:end], encoding='utf-8')
