@@ -61,14 +61,216 @@
 </div><div class="toast" id="toast" role="status"></div>
 <script>
 (() => {
-'use strict';
-const $=id=>document.getElementById(id);
-const STORE='randomx-v1';
-let mode='range', lastResults=[], lastLabel='', busy=false, toastTimer, rollTimer;
-const secureRandom=()=>{if(!globalThis.crypto?.getRandomValues)throw Error('Trình duyệt không hỗ trợ bộ sinh số ngẫu nhiên an toàn.');};
-function randBelow(n){if(!Number.isSafeInteger(n)||n<1)throw Error('Khoảng ngẫu nhiên vượt giới hạn số nguyên an toàn.');secureRandom();const N=BigInt(n),space=1n<<53n,limit=space-(space%N),a=new BigUint64Array(1);let x;do{crypto.getRandomValues(a);x=a[0]&((1n<<53n)-1n)}while(x>=limit);return Number(x%N)}
-function randUnit(){const a=new BigUint64Array(1);crypto.getRandomValues(a);return Number(a[0]>>11n)/9007199254740992}
-function shuffle(a){a=a.slice();for(let i=a.length-1;i>0;i--){const j=randBelow(i+1);[a[i],a[j]]=[a[j],a[i]]}return a}
-function chooseWeighted(items,weights,count,noRepeat){let pool=items.map((v,i)=>({v,w:weights[i]})),out=[];for(let k=0;k<count;k++){const total=pool.reduce((s,x)=>s+x.w,0);if(!(total>0)||!Number.isFinite(total))throw Error('Tổng trọng số phải hữu hạn và lớn hơn 0.');const t=randUnit()*total;let acc=0,idx=pool.findIndex(x=>{acc+=x.w;return t<acc});if(idx<0)idx=pool.length-1;out.push(pool[idx].v);if(noRepeat)pool.splice(idx,1)}return out}
-function getItems(){if(mode==='range')throw Error('Khoảng số được xử lý trực tiếp.');let a=$('sourceList').value.split(/\\r?\\n/).map(x=>x.trim()).filter(Boolean);if($('uniqueNames').checked)a=[...new Set(a)];if(!a.length)throw Error('Hãy nhập ít nhất một phần tử.');return a}function getWinners(){const count=Number($('winnerCount').value),noRepeat=$('noRepeat').checked;if(!Number.isSafeInteger(count)||count<1||count>100)throw Error('Số kết quả phải từ 1 đến 100.');if(mode==='range'){const min=Number($('minNum').value),max=Number($('maxNum').value);if(!Number.isSafeInteger(min)||!Number.isSafeInteger(max)||min>max)throw Error('Vui lòng nhập khoảng số nguyên hợp lệ.');const span=max-min+1;if(!Number.isSafeInteger(span)||span<1)throw Error('Khoảng số vượt giới hạn số nguyên an toàn.');if(noRepeat&&count>span)throw Error('Số kết quả lớn hơn số lượng số trong khoảng.');if(noRepeat){const picked=new Set();while(picked.size<count)picked.add(String(min+randBelow(span)));return [...picked]}return Array.from({length:count},()=>String(min+randBelow(span)))}const items=getItems();if(noRepeat&&count>items.length)throw Error('Số kết quả lớn hơn số phần tử duy nhất trong danh sách.');
-if($('weighted').checked){const raw=$('weightList').value.trim();if(!raw)throw Error('Hãy nhập trọng số cho từng phần tử.');const weights=raw.split(/\\r?\\n/).map(x=>Number(x.trim()));if(weights.length!==items.length||weights.some(x=>!Number.isFinite(x)||x<0)||!weights.some(x=>x>0))throw Error('Mỗi phần tử cần một trọng số hữu hạn, không âm; tổng trọng số phải lớn hơn 0.');if(noRepeat&&items.filter((_,i)=>weights[i]>0).length<count)throw Error('Không đủ phần tử có trọng số dương để chọn số lượng này.');return chooseWeighted(items,weights,count,noRepeat)}if(noRepeat)return shuffle(items).slice(0,count);return Array.from({length:count},()=>items[randBelow(items.length)])}>
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const STORAGE = 'randomx-v1';
+  let mode = 'range';
+  let lastResults = [];
+  let lastLabel = '';
+  let history = [];
+  let toastTimer;
+
+  function secureRandom() {
+    if (!globalThis.crypto || typeof crypto.getRandomValues !== 'function') {
+      throw new Error('Trình duyệt không hỗ trợ bộ sinh số ngẫu nhiên an toàn. Hãy dùng HTTPS hoặc trình duyệt hiện đại.');
+    }
+  }
+  function randBelow(n) {
+    if (!Number.isSafeInteger(n) || n < 1) throw new Error('Khoảng ngẫu nhiên không hợp lệ.');
+    secureRandom();
+    const limit = Math.floor(4294967296 / n) * n;
+    const a = new Uint32Array(1);
+    let x;
+    do { crypto.getRandomValues(a); x = a[0]; } while (x >= limit);
+    return x % n;
+  }
+  function randUnit() {
+    const a = new Uint32Array(1);
+    crypto.getRandomValues(a);
+    return a[0] / 4294967296;
+  }
+  function shuffle(input) {
+    const a = input.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = randBelow(i + 1);
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+  function notify(message) {
+    const toast = $('toast');
+    toast.textContent = message;
+    toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('show'), 2600);
+  }
+  function setMode(next) {
+    mode = next;
+    document.querySelectorAll('[data-mode]').forEach(button => {
+      const active = button.dataset.mode === mode;
+      button.setAttribute('aria-selected', String(active));
+      button.classList.toggle('active', active);
+    });
+    $('rangeFields').hidden = mode !== 'range';
+    $('listFields').hidden = mode === 'range';
+    $('sourceLabel').textContent = mode === 'names'
+      ? 'Danh sách tên (mỗi dòng một tên)'
+      : 'Danh sách phần tử (mỗi dòng một mục)';
+    $('weighted').disabled = mode === 'range';
+    if (mode === 'range') $('weighted').checked = false;
+    $('weightField').hidden = !$('weighted').checked || mode === 'range';
+  }
+  function getItems() {
+    let items = $('sourceList').value.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+    if ($('uniqueNames').checked) items = [...new Set(items)];
+    if (!items.length) throw new Error('Hãy nhập ít nhất một tên hoặc phần tử.');
+    return items;
+  }
+  function chooseWeighted(items, weights, count, noRepeat) {
+    const pool = items.map((value, index) => ({value, weight: weights[index]}));
+    const output = [];
+    for (let i = 0; i < count; i++) {
+      const total = pool.reduce((sum, item) => sum + item.weight, 0);
+      if (!(total > 0) || !Number.isFinite(total)) throw new Error('Tổng trọng số phải hữu hạn và lớn hơn 0.');
+      const target = randUnit() * total;
+      let sum = 0, chosen = pool.length - 1;
+      for (let j = 0; j < pool.length; j++) {
+        sum += pool[j].weight;
+        if (target < sum) { chosen = j; break; }
+      }
+      output.push(pool[chosen].value);
+      if (noRepeat) pool.splice(chosen, 1);
+    }
+    return output;
+  }
+  function getWinners() {
+    const count = Number($('winnerCount').value);
+    const noRepeat = $('noRepeat').checked;
+    if (!Number.isSafeInteger(count) || count < 1 || count > 100) throw new Error('Số kết quả phải từ 1 đến 100.');
+    if (mode === 'range') {
+      const min = Number($('minNum').value), max = Number($('maxNum').value);
+      if (!Number.isSafeInteger(min) || !Number.isSafeInteger(max) || min > max) throw new Error('Vui lòng nhập khoảng số nguyên hợp lệ.');
+      const span = max - min + 1;
+      if (!Number.isSafeInteger(span) || span < 1 || span > 4294967296) throw new Error('Khoảng số phải có tối đa 4.294.967.296 giá trị.');
+      if (noRepeat && count > span) throw new Error('Số kết quả lớn hơn số lượng số trong khoảng.');
+      if (noRepeat) return shuffle(Array.from({length: span}, (_, i) => String(min + i))).slice(0, count);
+      return Array.from({length: count}, () => String(min + randBelow(span)));
+    }
+    const items = getItems();
+    if (noRepeat && count > items.length) throw new Error('Số kết quả lớn hơn số phần tử duy nhất trong danh sách.');
+    if ($('weighted').checked) {
+      const raw = $('weightList').value.trim();
+      if (!raw) throw new Error('Hãy nhập trọng số cho từng phần tử.');
+      const weights = raw.split(/\r?\n/).map(x => Number(x.trim()));
+      if (weights.length !== items.length || weights.some(x => !Number.isFinite(x) || x < 0) || !weights.some(x => x > 0)) {
+        throw new Error('Mỗi phần tử cần một trọng số hữu hạn, không âm; số dòng phải khớp danh sách.');
+      }
+      if (noRepeat && items.filter((_, i) => weights[i] > 0).length < count) throw new Error('Không đủ phần tử có trọng số dương để chọn số lượng này.');
+      return chooseWeighted(items, weights, count, noRepeat);
+    }
+    return noRepeat ? shuffle(items).slice(0, count) : Array.from({length: count}, () => items[randBelow(items.length)]);
+  }
+  function saveHistory() {
+    try { localStorage.setItem(STORAGE, JSON.stringify(history.slice(0, 30))); } catch (_) {}
+  }
+  function renderHistory() {
+    $('historyCount').textContent = '(' + history.length + ')';
+    const list = $('historyList');
+    list.replaceChildren();
+    if (!history.length) {
+      const empty = document.createElement('div');
+      empty.className = 'empty-history';
+      empty.textContent = 'Kết quả của bạn sẽ xuất hiện ở đây.';
+      list.append(empty);
+      return;
+    }
+    history.forEach(item => {
+      const row = document.createElement('div');
+      row.className = 'history-item';
+      const info = document.createElement('div');
+      const title = document.createElement('strong');
+      title.textContent = item.label || 'Lượt quay';
+      const detail = document.createElement('div');
+      detail.className = 'history-detail';
+      detail.textContent = item.results.join(', ');
+      info.append(title, detail);
+      const time = document.createElement('time');
+      time.textContent = item.time || '';
+      row.append(info, time);
+      list.append(row);
+    });
+  }
+  function showResults(results, label) {
+    lastResults = results;
+    lastLabel = label || 'Kết quả quay';
+    $('resultLabel').textContent = lastLabel.toLocaleUpperCase('vi-VN');
+    $('resultValue').textContent = results.join(' · ');
+    $('resultValue').classList.remove('empty');
+    $('resultMeta').textContent = 'Đã chọn ' + results.length + ' kết quả.';
+    $('copyBtn').disabled = $('csvBtn').disabled = $('printBtn').disabled = false;
+    history.unshift({label: lastLabel, results, time: new Date().toLocaleString('vi-VN')});
+    history = history.slice(0, 30);
+    saveHistory();
+    renderHistory();
+  }
+  function draw() {
+    try {
+      const button = $('drawBtn');
+      button.disabled = true;
+      const results = getWinners();
+      showResults(results, $('roundLabel').value.trim() || 'Lượt quay');
+    } catch (error) {
+      notify(error.message || 'Không thể thực hiện lượt quay.');
+    } finally {
+      $('drawBtn').disabled = false;
+    }
+  }
+  function downloadCsv() {
+    if (!lastResults.length) return;
+    const rows = [['Ghi chú', 'Kết quả'], ...lastResults.map(value => [lastLabel, value])];
+    const csv = '\uFEFF' + rows.map(row => row.map(value => '"' + String(value).replace(/"/g, '""') + '"').join(',')).join('\r\n');
+    const url = URL.createObjectURL(new Blob([csv], {type: 'text/csv;charset=utf-8;'}));
+    const a = document.createElement('a');
+    a.href = url; a.download = 'randomx-ket-qua.csv'; a.click();
+    URL.revokeObjectURL(url);
+  }
+  document.querySelectorAll('[data-mode]').forEach(button => button.addEventListener('click', () => setMode(button.dataset.mode)));
+  $('weighted').addEventListener('change', () => { $('weightField').hidden = !$('weighted').checked || mode === 'range'; });
+  $('drawBtn').addEventListener('click', draw);
+  $('copyBtn').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(lastResults.join('\n'));
+      notify('Đã sao chép kết quả.');
+    } catch (_) { notify('Không thể sao chép tự động trên trình duyệt này.'); }
+  });
+  $('csvBtn').addEventListener('click', downloadCsv);
+  $('printBtn').addEventListener('click', () => window.print());
+  $('clearBtn').addEventListener('click', () => {
+    lastResults = []; lastLabel = '';
+    $('resultLabel').textContent = 'KẾT QUẢ CỦA BẠN';
+    $('resultValue').textContent = 'Sẵn sàng khám phá?';
+    $('resultValue').classList.add('empty');
+    $('resultMeta').textContent = 'Thiết lập lượt quay rồi nhấn bắt đầu.';
+    $('copyBtn').disabled = $('csvBtn').disabled = $('printBtn').disabled = true;
+  });
+  $('clearHistoryBtn').addEventListener('click', () => {
+    history = []; saveHistory(); renderHistory(); notify('Đã xóa lịch sử.');
+  });
+  $('themeBtn')?.addEventListener('click', () => {
+    const dark = document.documentElement.dataset.theme !== 'dark';
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    try { localStorage.setItem('randomx-theme', dark ? 'dark' : 'light'); } catch (_) {}
+  });
+  $('year').textContent = new Date().getFullYear();
+  try {
+    const theme = localStorage.getItem('randomx-theme');
+    if (theme) document.documentElement.dataset.theme = theme;
+    const saved = JSON.parse(localStorage.getItem(STORAGE) || '[]');
+    if (Array.isArray(saved)) history = saved.filter(x => x && Array.isArray(x.results)).slice(0, 30);
+  } catch (_) {}
+  renderHistory();
+  setMode('range');
+})();
+</script>
+</body>
+</html>
