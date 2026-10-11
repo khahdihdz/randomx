@@ -153,7 +153,7 @@
       const span = max - min + 1;
       if (!Number.isSafeInteger(span) || span < 1 || span > 4294967296) throw new Error('Khoảng số phải có tối đa 4.294.967.296 giá trị.');
       if (noRepeat && count > span) throw new Error('Số kết quả lớn hơn số lượng số trong khoảng.');
-      if (noRepeat) return shuffle(Array.from({length: span}, (_, i) => String(min + i))).slice(0, count);
+      if (noRepeat) { const picked = new Set(); while (picked.size < count) picked.add(String(min + randBelow(span))); return [...picked]; }
       return Array.from({length: count}, () => String(min + randBelow(span)));
     }
     const items = getItems();
